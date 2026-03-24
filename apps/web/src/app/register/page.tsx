@@ -52,12 +52,13 @@ export default function RegisterPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
+        credentials: 'include',
       });
 
       const data = await response.json();
 
-      if (!data.success) {
-        setError(data.error?.message || 'Registration failed. Please try again.');
+      if (!response.ok) {
+        setError(data.error || 'Registration failed. Please try again.');
         return;
       }
 

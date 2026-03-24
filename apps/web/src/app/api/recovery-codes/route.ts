@@ -1,149 +1,104 @@
-import { NextResponse } from 'next/server';
-import { getCurrentUser, hashPassword, logSecurityEvent, generateRandomToken } from '@/lib/auth';
-import { sql } from '@/lib/db';
+import { NextRequest, NextResponse } from 'next/server';
+import { validateSession, generateRecoveryCodes } from '@/lib/auth';
+import { sql, logSecurityEvent } from '@/lib/db';
 
-// Generate a readable recovery code
-function generateRecoveryCode(): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Removed confusing chars
-  const segments = 4;
-  const segmentLength = 4;
-  const parts: string[] = [];
-  
-  for (let i = 0; i < segments; i++) {
-    let segment = '';
-    for (let j = 0; j < segmentLength; j++) {
-      const randomIndex = Math.floor(Math.random() * chars.length);
-      segment += chars[randomIndex];
-    }
-    parts.push(segment);
-  }
-  
-  return parts.join('-');
-}
-
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const result = await getCurrentUser();
+    const sessionToken = request.cookies.get('session_token')?.value;
     
-    if (!result) {
+    if (!sessionToken) {
       return NextResponse.json(
-        { success: false, error: { code: 'UNAUTHORIZED', message: 'Not authenticated.' } },
+        { error: 'Not authenticated' },
+        { status: 401 }
+      );
+    }
+
+    const session = await validateSession(sessionToken);
+    if (!session) {
+      return NextResponse.json(
+        { error: 'Invalid session' },
         { status: 401 }
       );
     }
     
-    const { user } = result;
-    
-    // Get active recovery code batches with remaining count
-    const batches = await sql`
-      SELECT id, batch_name, codes_generated, codes_remaining, created_at
-      FROM recovery_code_batches 
-      WHERE user_id = ${user.id} AND is_active = true
+    // Get recovery codes (don't show actual codes, just metadata)
+    const recoveryCodes = await sql`
+      SELECT id, code, used_at, created_at
+      FROM simple_recovery_codes 
+      WHERE user_id = ${session.user_id}
       ORDER BY created_at DESC
     `;
     
     return NextResponse.json({
-      success: true,
-      data: {
-        batches: batches.map((batch: any) => ({
-          id: batch.id,
-          batchName: batch.batch_name,
-          codesGenerated: batch.codes_generated,
-          codesRemaining: batch.codes_remaining,
-          createdAt: batch.created_at,
-        })),
-      },
+      recoveryCodes: recoveryCodes.map((code: { id: string; code: string; used_at: Date | null; created_at: Date }) => ({
+        id: code.id,
+        // Mask the code, only show first and last 2 characters
+        code: code.code.substring(0, 2) + '****' + code.code.substring(code.code.length - 2),
+        used_at: code.used_at,
+        created_at: code.created_at,
+      })),
     });
   } catch (error) {
     console.error('Get recovery codes error:', error);
     return NextResponse.json(
-      { success: false, error: { code: 'SERVER_ERROR', message: 'An unexpected error occurred.' } },
+      { error: 'Failed to get recovery codes' },
       { status: 500 }
     );
   }
 }
 
-export async function POST() {
+export async function POST(request: NextRequest) {
   try {
-    const result = await getCurrentUser();
+    const sessionToken = request.cookies.get('session_token')?.value;
     
-    if (!result) {
+    if (!sessionToken) {
       return NextResponse.json(
-        { success: false, error: { code: 'UNAUTHORIZED', message: 'Not authenticated.' } },
+        { error: 'Not authenticated' },
+        { status: 401 }
+      );
+    }
+
+    const session = await validateSession(sessionToken);
+    if (!session) {
+      return NextResponse.json(
+        { error: 'Invalid session' },
         { status: 401 }
       );
     }
     
-    const { user, session } = result;
-    
-    // Deactivate existing batches
+    // Delete existing unused recovery codes
     await sql`
-      UPDATE recovery_code_batches SET is_active = false WHERE user_id = ${user.id}
+      DELETE FROM simple_recovery_codes WHERE user_id = ${session.user_id}
     `;
     
     // Generate 10 new recovery codes
-    const codes: string[] = [];
-    const codeHashes: string[] = [];
+    const codes = generateRecoveryCodes(10);
     
-    for (let i = 0; i < 10; i++) {
-      const code = generateRecoveryCode();
-      const hash = await hashPassword(code);
-      codes.push(code);
-      codeHashes.push(hash);
-    }
-    
-    // Create new batch
-    const [batch] = await sql`
-      INSERT INTO recovery_code_batches (user_id, batch_name, codes_generated, codes_remaining)
-      VALUES (${user.id}, ${`Recovery Codes - ${new Date().toLocaleDateString()}`}, 10, 10)
-      RETURNING *
-    `;
-    
-    // Insert individual codes
-    for (const hash of codeHashes) {
+    // Insert new codes
+    for (const code of codes) {
       await sql`
-        INSERT INTO recovery_codes (batch_id, code_hash)
-        VALUES (${batch.id}, ${hash})
-      `;
-    }
-    
-    // Create authenticator record if not exists
-    const existingAuth = await sql`
-      SELECT id FROM authenticators 
-      WHERE user_id = ${user.id} AND type = 'RECOVERY_CODE' AND is_active = true
-    `;
-    
-    if (existingAuth.length === 0) {
-      await sql`
-        INSERT INTO authenticators (user_id, type, name, is_backup)
-        VALUES (${user.id}, 'RECOVERY_CODE', 'Recovery Codes', true)
+        INSERT INTO simple_recovery_codes (user_id, code)
+        VALUES (${session.user_id}, ${code})
       `;
     }
     
     // Log security event
     await logSecurityEvent(
-      'RECOVERY_CODE_GENERATED',
-      'Recovery Codes Generated',
-      `New recovery codes generated for user`,
-      {
-        userId: user.id,
-        sessionId: session.id,
-        status: 'SUCCESS',
-      }
+      session.user_id,
+      'recovery_codes_generated',
+      request.headers.get('x-forwarded-for') || 'unknown',
+      request.headers.get('user-agent') || 'unknown',
+      { count: codes.length }
     );
     
     return NextResponse.json({
-      success: true,
-      data: {
-        codes,
-        batchId: batch.id,
-        message: 'Recovery codes generated successfully. Store these securely - they will not be shown again.',
-      },
+      codes,
+      message: 'Recovery codes generated successfully. Store these securely - they will not be shown again.',
     });
   } catch (error) {
     console.error('Generate recovery codes error:', error);
     return NextResponse.json(
-      { success: false, error: { code: 'SERVER_ERROR', message: 'An unexpected error occurred.' } },
+      { error: 'Failed to generate recovery codes' },
       { status: 500 }
     );
   }

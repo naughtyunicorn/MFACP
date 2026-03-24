@@ -50,10 +50,11 @@ export default function OnboardingPage() {
     try {
       const response = await fetch('/api/recovery-codes', {
         method: 'POST',
+        credentials: 'include',
       });
       const data = await response.json();
-      if (data.success) {
-        setRecoveryCodes(data.data.codes);
+      if (response.ok && data.codes) {
+        setRecoveryCodes(data.codes);
         setCompletedSteps(prev => new Set([...prev, 'recovery']));
         setSecurityScore(prev => prev + 10);
       }

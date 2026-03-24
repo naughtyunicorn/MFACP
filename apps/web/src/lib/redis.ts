@@ -10,6 +10,7 @@ export const redis = new Redis({
 export const REDIS_KEYS = {
   SESSION: 'session:',
   WEBAUTHN_CHALLENGE: 'webauthn_challenge:',
+  MFA_CHALLENGE: 'mfa_challenge:',
   RATE_LIMIT: 'rate_limit:',
   PASSWORD_RESET: 'password_reset:',
   EMAIL_VERIFICATION: 'email_verification:',
@@ -100,4 +101,24 @@ export async function getRecoveryToken(token: string) {
 
 export async function deleteRecoveryToken(token: string) {
   await redis.del(`${REDIS_KEYS.RECOVERY_TOKEN}${token}`);
+}
+
+// MFA challenge management
+interface MfaChallenge {
+  userId: string;
+  email: string;
+  createdAt: string;
+}
+
+export async function setMfaChallenge(challengeId: string, data: MfaChallenge, expiresInSeconds: number = 300) {
+  await redis.set(`${REDIS_KEYS.MFA_CHALLENGE}${challengeId}`, JSON.stringify(data), { ex: expiresInSeconds });
+}
+
+export async function getMfaChallenge(challengeId: string): Promise<MfaChallenge | null> {
+  const data = await redis.get(`${REDIS_KEYS.MFA_CHALLENGE}${challengeId}`);
+  return data ? (typeof data === 'string' ? JSON.parse(data) : data) : null;
+}
+
+export async function deleteMfaChallenge(challengeId: string) {
+  await redis.del(`${REDIS_KEYS.MFA_CHALLENGE}${challengeId}`);
 }
