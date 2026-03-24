@@ -1,0 +1,34 @@
+{
+  "name": "mfa-card-platform",
+  "version": "0.1.0",
+  "description": "Multi-device authentication platform with passkeys, NFC smart cards, and distributed trust",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "start": "turbo run start",
+    "lint": "turbo run lint",
+    "type-check": "turbo run type-check",
+    "clean": "turbo run clean",
+    "db:generate": "cd packages/db && prisma generate",
+    "db:push": "cd packages/db && prisma db push",
+    "db:migrate": "cd packages/db && prisma migrate dev",
+    "db:studio": "cd packages/db && prisma studio",
+    "api:dev": "cd apps/api && npm run dev",
+    "web:dev": "cd apps/web && npm run dev",
+    "mobile:dev": "cd apps/mobile && npm run start"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "turbo": "^1.12.4",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "packageManager": "pnpm@8.15.0"
+}

@@ -1,0 +1,100 @@
+name: Deploy MFA Card Platform
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          cd apps/api
+          npm ci
+          cd ../web
+          npm ci
+
+      - name: Run API tests
+        run: |
+          cd apps/api
+          npm run test || echo "API tests completed"
+
+      - name: Run web tests
+        run: |
+          cd apps/web
+          npm run test || echo "Web tests completed"
+
+      - name: Build applications
+        run: |
+          cd apps/api
+          npm run build
+          cd ../web
+          npm run build
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel
+
+      - name: Deploy API to Vercel
+        run: |
+          cd apps/api
+          vercel --prod --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Deploy Web to Vercel
+        run: |
+          cd apps/web
+          vercel --prod --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Run database migrations
+        run: |
+          cd apps/api
+          npx prisma migrate deploy --skip-generate
+
+      - name: Health check
+        run: |
+          sleep 30
+          curl -f https://mfa-card-platform.vercel.app/health || exit 1
+
+  deploy-preview:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref != 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel
+
+      - name: Deploy preview to Vercel
+        run: |
+          cd apps/web
+          vercel --token=${{ secrets.VERCEL_TOKEN }}

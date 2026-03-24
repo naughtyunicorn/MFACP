@@ -1,0 +1,30 @@
+{
+  "version": 2,
+  "name": "mfa-card-platform",
+  "builds": [
+    {
+      "src": "apps/web/package.json",
+      "use": "@vercel/next",
+      "config": {
+        "distDir": ".next"
+      }
+    }
+  ],
+  "routes": [
+    {
+      "src": "apps/web",
+      "dest": "/",
+      "handle": "filesystem"
+    }
+  ],
+  "env": {
+    "NEXT_PUBLIC_API_URL": "@api_url",
+    "NEXT_PUBLIC_APP_NAME": "MFA Card Platform",
+    "NEXT_PUBLIC_APP_DESCRIPTION": "Enterprise-grade multi-factor authentication platform"
+  },
+  "functions": {
+    "apps/api/dist/index.js": {
+      "maxDuration": 30
+    }
+  }
+}

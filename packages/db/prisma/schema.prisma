@@ -1,0 +1,375 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// User account with security status
+model User {
+  id                String   @id @default(cuid())
+  email             String   @unique
+  emailVerified     Boolean  @default(false)
+  passwordHash      String?  // Optional for passkey-only accounts
+  
+  // Account status and security
+  riskTier          RiskTier @default(LOW)
+  isLocked          Boolean  @default(false)
+  lockedAt          DateTime?
+  lockReason        String?
+  
+  // Security settings
+  requireReauth     Boolean  @default(true)
+  lastPasswordChange DateTime?
+  
+  // Timestamps
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  // Relations
+  devices           Device[]
+  authenticators    Authenticator[]
+  webauthnCredentials WebAuthnCredential[]
+  smartCards        SmartCard[]
+  totpSecrets       TotpSecret[]
+  recoveryCodeBatches RecoveryCodeBatch[]
+  recoveryRequests  RecoveryRequest[]
+  sessions          Session[]
+  securityEvents    SecurityEvent[]
+  
+  @@map("users")
+}
+
+// Device management
+model Device {
+  id              String    @id @default(cuid())
+  userId          String
+  userAgent       String?
+  ipAddress       String?
+  deviceId        String    // Browser/device fingerprint
+  deviceType      DeviceType @default(UNKNOWN)
+  isActive        Boolean   @default(true)
+  lastSeenAt      DateTime  @default(now())
+  trustedAt       DateTime?
+  nickname        String?
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessions        Session[]
+  
+  @@unique([userId, deviceId])
+  @@map("devices")
+}
+
+// Base authenticator for all types
+model Authenticator {
+  id              String            @id @default(cuid())
+  userId          String
+  type            AuthenticatorType
+  name            String
+  isActive        Boolean           @default(true)
+  isBackup        Boolean           @default(false)
+  lastUsedAt      DateTime?
+  
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("authenticators")
+}
+
+// WebAuthn passkey credentials
+model WebAuthnCredential {
+  id              String            @id @default(cuid())
+  userId          String
+  authenticatorId String            @unique
+  
+  credentialId    String            // Base64url encoded
+  credentialType  String            // "public-key"
+  transports      String[]          // ["usb", "nfc", "ble", "internal"]
+  
+  // Attestation
+  aaguid          String?
+  attestationType String?
+  attestationFmt  String?
+  
+  // Public key
+  publicKey       String            // COSE key in base64url
+  
+  // Metadata
+  name            String
+  isActive        Boolean           @default(true)
+  isBackup        Boolean           @default(false)
+  lastUsedAt      DateTime?
+  
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, credentialId])
+  @@map("webauthn_credentials")
+}
+
+// NFC Smart Card
+model SmartCard {
+  id              String            @id @default(cuid())
+  userId          String
+  cardId          String            @unique // Card identifier
+  cardAid         String            // Application ID
+  publicKey       String            // Card's public key
+  
+  // Card metadata
+  cardVersion     String?
+  manufacturer    String?
+  serialNumber    String?
+  
+  // Status
+  isActive        Boolean           @default(true)
+  isBackup        Boolean           @default(false)
+  lastUsedAt      DateTime?
+  usageCounter    Int               @default(0)
+  
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("smart_cards")
+}
+
+// TOTP secrets
+model TotpSecret {
+  id              String            @id @default(cuid())
+  userId          String
+  secret          String            // Encrypted TOTP secret
+  algorithm       String            @default("SHA1")
+  digits          Int               @default(6)
+  period          Int               @default(30)
+  
+  // Metadata
+  name            String
+  isActive        Boolean           @default(true)
+  isBackup        Boolean           @default(false)
+  lastUsedAt      DateTime?
+  verificationCounter Int           @default(0)
+  
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("totp_secrets")
+}
+
+// Recovery code batches
+model RecoveryCodeBatch {
+  id              String            @id @default(cuid())
+  userId          String
+  batchName       String?
+  codesGenerated  Int               @default(0)
+  codesRemaining  Int               @default(0)
+  isActive        Boolean           @default(true)
+  
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  codes           RecoveryCode[]
+  
+  @@map("recovery_code_batches")
+}
+
+// Individual recovery codes
+model RecoveryCode {
+  id              String            @id @default(cuid())
+  batchId         String
+  codeHash        String            // Hashed recovery code
+  isUsed          Boolean           @default(false)
+  usedAt          DateTime?
+  usedByDeviceId  String?
+  usedByIpAddress String?
+  
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  
+  batch           RecoveryCodeBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  
+  @@map("recovery_codes")
+}
+
+// Recovery requests (delayed recovery)
+model RecoveryRequest {
+  id              String            @id @default(cuid())
+  userId          String
+  requestId       String            @unique @default(cuid())
+  
+  // Request details
+  reason          RecoveryReason
+  contactEmail    String
+  additionalInfo  String?
+  
+  // Status
+  status          RecoveryStatus    @default(PENDING)
+  approvedAt      DateTime?
+  deniedAt        DateTime?
+  deniedReason    String?
+  
+  // Processing
+  processedBy     String?           // Admin user ID
+  processingNotes String?
+  
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("recovery_requests")
+}
+
+// User sessions
+model Session {
+  id              String            @id @default(cuid())
+  userId          String
+  deviceId        String?
+  token           String            @unique
+  sessionType     SessionType       @default(FULL)
+  trustLevel      TrustLevel        @default(FULL)
+  
+  // Session metadata
+  ipAddress       String?
+  userAgent       String?
+  isActive        Boolean           @default(true)
+  expiresAt       DateTime
+  
+  // Security
+  requiresReauth  Boolean           @default(false)
+  lastActivityAt  DateTime          @default(now())
+  
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  device          Device?           @relation(fields: [deviceId], references: [id])
+  
+  @@map("sessions")
+}
+
+// Security events for audit trail
+model SecurityEvent {
+  id              String            @id @default(cuid())
+  userId          String?
+  sessionId       String?
+  
+  // Event details
+  eventType       SecurityEventType
+  eventName       String
+  description     String
+  
+  // Context
+  ipAddress       String?
+  userAgent       String?
+  deviceId        String?
+  authenticatorId String?
+  
+  // Risk assessment
+  riskScore       Int               @default(0)
+  riskFactors     String[]          // JSON array of risk factors
+  
+  // Status
+  status          EventStatus       @default(SUCCESS)
+  failureReason   String?
+  
+  createdAt       DateTime          @default(now())
+  
+  user            User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  
+  @@index([userId])
+  @@index([eventType])
+  @@index([createdAt])
+  @@map("security_events")
+}
+
+// Enums
+enum RiskTier {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum DeviceType {
+  DESKTOP
+  MOBILE
+  TABLET
+  UNKNOWN
+}
+
+enum AuthenticatorType {
+  WEBAUTHN
+  SMART_CARD
+  TOTP
+  RECOVERY_CODE
+}
+
+enum SessionType {
+  FULL
+  RECOVERY
+  STEP_UP
+}
+
+enum TrustLevel {
+  FULL
+  REDUCED
+  ELEVATED
+}
+
+enum RecoveryReason {
+  LOST_DEVICE
+  LOST_PHONE
+  LOST_CARD
+  FORGOT_PASSWORD
+  COMPROMISED_ACCOUNT
+  OTHER
+}
+
+enum RecoveryStatus {
+  PENDING
+  APPROVED
+  DENIED
+  COMPLETED
+  CANCELLED
+}
+
+enum SecurityEventType {
+  LOGIN_SUCCESS
+  LOGIN_FAILURE
+  LOGOUT
+  PASSWORD_CHANGE
+  AUTHENTICATOR_ADDED
+  AUTHENTICATOR_REMOVED
+  AUTHENTICATOR_USED
+  RECOVERY_CODE_GENERATED
+  RECOVERY_CODE_USED
+  RECOVERY_REQUESTED
+  ACCOUNT_LOCKED
+  ACCOUNT_UNLOCKED
+  SUSPICIOUS_ACTIVITY
+  SECURITY_SETTING_CHANGED
+  DEVICE_REVOKED
+  SESSION_INVALIDATED
+}
+
+enum EventStatus {
+  SUCCESS
+  FAILURE
+  WARNING
+}

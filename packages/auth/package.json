@@ -1,0 +1,20 @@
+{
+  "name": "@mfa-platform/auth",
+  "version": "0.1.0",
+  "description": "Authentication utilities and services",
+  "main": "index.ts",
+  "scripts": {
+    "build": "tsc",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@mfa-platform/shared": "workspace:*",
+    "@mfa-platform/db": "workspace:*",
+    "bcrypt": "^5.1.1",
+    "jose": "^5.1.3"
+  },
+  "devDependencies": {
+    "@types/bcrypt": "^5.0.2",
+    "typescript": "^5.3.3"
+  }
+}
