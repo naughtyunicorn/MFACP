@@ -7,7 +7,7 @@ import {
   ChevronLeft, ChevronRight, Filter
 } from 'lucide-react';
 
-const fetcher = (url: string) => fetch(url).then(res => res.json());
+const fetcher = (url: string) => fetch(url, { credentials: 'include' }).then(res => res.json());
 
 const EVENT_TYPES = [
   { value: '', label: 'All Events' },
@@ -30,8 +30,8 @@ export default function ActivityPage() {
     fetcher
   );
 
-  const events = data?.data?.events || [];
-  const pagination = data?.data?.pagination || { total: 0, hasMore: false };
+  const events = data?.events || [];
+  const pagination = data?.pagination || { total: 0, hasMore: false };
 
   const getStatusIcon = (status: string) => {
     switch (status?.toUpperCase()) {

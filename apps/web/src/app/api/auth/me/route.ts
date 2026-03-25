@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { validateSession, deleteSession } from '@/lib/auth';
-import { sql, logSecurityEvent } from '@/lib/db';
+import { validateSession, deleteSession, logSecurityEvent } from '@/lib/auth';
+import { sql } from '@/lib/db';
 
 export async function GET(request: NextRequest) {
   try {
@@ -34,7 +34,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const user = users[0];
+    const user = users[0] as { id: string; email: string; display_name: string | null; created_at: Date; updated_at: Date };
 
     // Check if user has MFA enabled
     const authenticators = await sql`
@@ -97,18 +97,23 @@ export async function DELETE(request: NextRequest) {
     }
 
     const userId = session.user_id;
+    const ipAddress = request.headers.get('x-forwarded-for') || 'unknown';
+    const userAgent = request.headers.get('user-agent') || 'unknown';
 
     // Log the account deletion event before deleting
     await logSecurityEvent(
-      userId,
-      'account_deleted',
-      request.headers.get('x-forwarded-for') || 'unknown',
-      request.headers.get('user-agent') || 'unknown',
-      { method: 'user_initiated' }
+      'ACCOUNT_DELETED',
+      'Account Deleted',
+      `User account deleted`,
+      { userId, ipAddress, userAgent, status: 'SUCCESS' }
     );
 
-    // Delete all user data (cascading deletes should handle related tables)
-    await sql`DELETE FROM recovery_codes WHERE user_id = ${userId}`;
+    // Delete all user data
+    await sql`DELETE FROM simple_recovery_codes WHERE user_id = ${userId}`;
+    await sql`DELETE FROM recovery_codes WHERE batch_id IN (SELECT id FROM recovery_code_batches WHERE user_id = ${userId})`;
+    await sql`DELETE FROM recovery_code_batches WHERE user_id = ${userId}`;
+    await sql`DELETE FROM totp_secrets WHERE user_id = ${userId}`;
+    await sql`DELETE FROM webauthn_credentials WHERE user_id = ${userId}`;
     await sql`DELETE FROM authenticators WHERE user_id = ${userId}`;
     await sql`DELETE FROM devices WHERE user_id = ${userId}`;
     await sql`DELETE FROM sessions WHERE user_id = ${userId}`;

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { validateSession } from '@/lib/auth'
-import { sql, logSecurityEvent } from '@/lib/db'
+import { validateSession, logSecurityEvent } from '@/lib/auth'
+import { sql } from '@/lib/db'
 import * as OTPAuth from 'otpauth'
 import crypto from 'crypto'
 
@@ -44,7 +44,9 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const email = users[0].email
+    const email = users[0].email as string
+    const ipAddress = request.headers.get('x-forwarded-for') || 'unknown'
+    const userAgent = request.headers.get('user-agent') || 'unknown'
 
     // Verify the TOTP code
     const totp = new OTPAuth.TOTP({
@@ -66,20 +68,34 @@ export async function POST(request: NextRequest) {
 
     // Save the authenticator to the database
     const authenticatorId = crypto.randomUUID()
+    const totpId = crypto.randomUUID()
     const authenticatorName = name || 'Authenticator App'
 
+    // Create the authenticator record
     await sql`
-      INSERT INTO authenticators (id, user_id, type, name, secret, is_active, created_at, last_used_at)
-      VALUES (${authenticatorId}, ${session.user_id}, 'totp', ${authenticatorName}, ${secret}, true, NOW(), NOW())
+      INSERT INTO authenticators (id, user_id, type, name, secret, is_active, is_backup, created_at, updated_at, last_used_at)
+      VALUES (${authenticatorId}, ${session.user_id}, 'totp', ${authenticatorName}, ${secret}, true, false, NOW(), NOW(), NOW())
+    `
+
+    // Also create a totp_secrets record for more detailed info
+    await sql`
+      INSERT INTO totp_secrets (id, user_id, secret, name, algorithm, digits, period, is_active, is_backup, verification_counter, created_at, updated_at, last_used_at)
+      VALUES (${totpId}, ${session.user_id}, ${secret}, ${authenticatorName}, 'SHA1', 6, 30, true, false, 1, NOW(), NOW(), NOW())
     `
 
     // Log security event
     await logSecurityEvent(
-      session.user_id,
-      'authenticator_added',
-      request.headers.get('x-forwarded-for') || 'unknown',
-      request.headers.get('user-agent') || 'unknown',
-      { type: 'totp', name: authenticatorName }
+      'AUTHENTICATOR_ADDED',
+      'Authenticator Added',
+      `TOTP authenticator added: ${authenticatorName}`,
+      { 
+        userId: session.user_id, 
+        sessionId: session.id,
+        authenticatorId,
+        ipAddress,
+        userAgent,
+        status: 'SUCCESS'
+      }
     )
 
     return NextResponse.json({

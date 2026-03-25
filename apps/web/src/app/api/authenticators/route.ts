@@ -8,7 +8,7 @@ export async function GET() {
     
     if (!result) {
       return NextResponse.json(
-        { success: false, error: { code: 'UNAUTHORIZED', message: 'Not authenticated.' } },
+        { error: 'Not authenticated.' },
         { status: 401 }
       );
     }
@@ -28,63 +28,59 @@ export async function GET() {
       WHERE user_id = ${user.id} AND is_active = true
     ` as DBWebAuthnCredential[];
     
-    // Get TOTP secrets details
+    // Get TOTP secrets details (excluding the secret itself)
     const totpSecrets = await sql`
       SELECT id, user_id, name, algorithm, digits, period, is_active, is_backup, last_used_at, created_at 
       FROM totp_secrets 
       WHERE user_id = ${user.id} AND is_active = true
     ` as DBTotpSecret[];
     
-    // Get recovery code batches
-    const recoveryBatches = await sql`
-      SELECT * FROM recovery_code_batches 
-      WHERE user_id = ${user.id} AND is_active = true
+    // Get recovery code count
+    const recoveryCodes = await sql`
+      SELECT COUNT(*) as total,
+             SUM(CASE WHEN used_at IS NULL THEN 1 ELSE 0 END) as unused
+      FROM simple_recovery_codes 
+      WHERE user_id = ${user.id}
     `;
     
     return NextResponse.json({
-      success: true,
-      data: {
-        authenticators: authenticators.map(auth => ({
-          id: auth.id,
-          type: auth.type,
-          name: auth.name,
-          isActive: auth.is_active,
-          isBackup: auth.is_backup,
-          lastUsedAt: auth.last_used_at,
-          createdAt: auth.created_at,
-        })),
-        webauthn: webauthnCredentials.map(cred => ({
-          id: cred.id,
-          name: cred.name,
-          credentialId: cred.credential_id,
-          transports: cred.transports,
-          isBackup: cred.is_backup,
-          lastUsedAt: cred.last_used_at,
-          createdAt: cred.created_at,
-        })),
-        totp: totpSecrets.map(totp => ({
-          id: totp.id,
-          name: totp.name,
-          algorithm: totp.algorithm,
-          digits: totp.digits,
-          period: totp.period,
-          isBackup: totp.is_backup,
-          lastUsedAt: totp.last_used_at,
-          createdAt: totp.created_at,
-        })),
-        recoveryCodes: recoveryBatches.map((batch: any) => ({
-          id: batch.id,
-          batchName: batch.batch_name,
-          codesGenerated: batch.codes_generated,
-          codesRemaining: batch.codes_remaining,
-          createdAt: batch.created_at,
-        })),
+      authenticators: authenticators.map(auth => ({
+        id: auth.id,
+        type: auth.type,
+        name: auth.name,
+        isActive: auth.is_active,
+        isBackup: auth.is_backup,
+        lastUsedAt: auth.last_used_at,
+        createdAt: auth.created_at,
+      })),
+      webauthn: webauthnCredentials.map(cred => ({
+        id: cred.id,
+        name: cred.name,
+        credentialId: cred.credential_id,
+        transports: cred.transports,
+        isBackup: cred.is_backup,
+        lastUsedAt: cred.last_used_at,
+        createdAt: cred.created_at,
+      })),
+      totp: totpSecrets.map(totp => ({
+        id: totp.id,
+        name: totp.name,
+        algorithm: totp.algorithm,
+        digits: totp.digits,
+        period: totp.period,
+        isBackup: totp.is_backup,
+        lastUsedAt: totp.last_used_at,
+        createdAt: totp.created_at,
+      })),
+      recoveryCodes: {
+        total: Number(recoveryCodes[0]?.total || 0),
+        unused: Number(recoveryCodes[0]?.unused || 0),
       },
     });
   } catch (error) {
     console.error('Get authenticators error:', error);
     return NextResponse.json(
-      { success: false, error: { code: 'SERVER_ERROR', message: 'An unexpected error occurred.' } },
+      { error: 'An unexpected error occurred.' },
       { status: 500 }
     );
   }
@@ -96,7 +92,7 @@ export async function DELETE(request: NextRequest) {
     
     if (!result) {
       return NextResponse.json(
-        { success: false, error: { code: 'UNAUTHORIZED', message: 'Not authenticated.' } },
+        { error: 'Not authenticated.' },
         { status: 401 }
       );
     }
@@ -108,7 +104,7 @@ export async function DELETE(request: NextRequest) {
     
     if (!authenticatorId || !type) {
       return NextResponse.json(
-        { success: false, error: { code: 'INVALID_REQUEST', message: 'Authenticator ID and type are required.' } },
+        { error: 'Authenticator ID and type are required.' },
         { status: 400 }
       );
     }
@@ -121,37 +117,39 @@ export async function DELETE(request: NextRequest) {
     
     if (Number(activeCount[0]?.count) <= 1) {
       return NextResponse.json(
-        { success: false, error: { code: 'LAST_AUTHENTICATOR', message: 'Cannot remove your last authenticator. Add another method first.' } },
+        { error: 'Cannot remove your last authenticator. Add another method first.' },
         { status: 400 }
       );
     }
     
     let name = 'Authenticator';
+    const ipAddress = request.headers.get('x-forwarded-for') || 'unknown';
+    const userAgent = request.headers.get('user-agent') || 'unknown';
     
     // Deactivate based on type
     if (type === 'webauthn') {
-      const [cred] = await sql`
+      const creds = await sql`
         SELECT name FROM webauthn_credentials WHERE id = ${authenticatorId} AND user_id = ${user.id}
       `;
-      name = cred?.name || 'Passkey';
+      name = creds[0]?.name || 'Passkey';
       
       await sql`
-        UPDATE webauthn_credentials SET is_active = false WHERE id = ${authenticatorId} AND user_id = ${user.id}
+        UPDATE webauthn_credentials SET is_active = false, updated_at = NOW() WHERE id = ${authenticatorId} AND user_id = ${user.id}
       `;
     } else if (type === 'totp') {
-      const [totp] = await sql`
+      const totps = await sql`
         SELECT name FROM totp_secrets WHERE id = ${authenticatorId} AND user_id = ${user.id}
       `;
-      name = totp?.name || 'TOTP';
+      name = totps[0]?.name || 'TOTP';
       
       await sql`
-        UPDATE totp_secrets SET is_active = false WHERE id = ${authenticatorId} AND user_id = ${user.id}
+        UPDATE totp_secrets SET is_active = false, updated_at = NOW() WHERE id = ${authenticatorId} AND user_id = ${user.id}
       `;
     }
     
     // Update authenticators table
     await sql`
-      UPDATE authenticators SET is_active = false 
+      UPDATE authenticators SET is_active = false, updated_at = NOW()
       WHERE user_id = ${user.id} AND id = ${authenticatorId}
     `;
     
@@ -164,18 +162,19 @@ export async function DELETE(request: NextRequest) {
         userId: user.id,
         sessionId: session.id,
         authenticatorId,
+        ipAddress,
+        userAgent,
         status: 'SUCCESS',
       }
     );
     
     return NextResponse.json({
-      success: true,
-      data: { message: 'Authenticator removed successfully.' },
+      message: 'Authenticator removed successfully.',
     });
   } catch (error) {
     console.error('Remove authenticator error:', error);
     return NextResponse.json(
-      { success: false, error: { code: 'SERVER_ERROR', message: 'An unexpected error occurred.' } },
+      { error: 'An unexpected error occurred.' },
       { status: 500 }
     );
   }

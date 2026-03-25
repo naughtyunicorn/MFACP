@@ -7,35 +7,36 @@ import {
   CheckCircle, AlertCircle, Trash2, Shield
 } from 'lucide-react';
 
-const fetcher = (url: string) => fetch(url).then(res => res.json());
+const fetcher = (url: string) => fetch(url, { credentials: 'include' }).then(res => res.json());
 
 export default function DevicesPage() {
   const { data, error, isLoading } = useSWR('/api/devices', fetcher);
   const [revoking, setRevoking] = useState<string | null>(null);
-  const [error2, setError2] = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
 
-  const devices = data?.data || [];
+  const devices = data?.devices || [];
 
   const handleRevoke = async (deviceId: string) => {
     if (!confirm('Are you sure you want to revoke this device? All sessions on this device will be terminated.')) return;
     
     setRevoking(deviceId);
-    setError2('');
+    setErrorMsg('');
 
     try {
       const response = await fetch(`/api/devices?id=${deviceId}`, {
         method: 'DELETE',
+        credentials: 'include',
       });
       const result = await response.json();
       
-      if (!result.success) {
-        setError2(result.error?.message || 'Failed to revoke device');
+      if (!response.ok) {
+        setErrorMsg(result.error || 'Failed to revoke device');
       } else {
         mutate('/api/devices');
         mutate('/api/auth/me');
       }
     } catch (err) {
-      setError2('An unexpected error occurred');
+      setErrorMsg('An unexpected error occurred');
     } finally {
       setRevoking(null);
     }
@@ -105,10 +106,10 @@ export default function DevicesPage() {
       </div>
 
       {/* Error Message */}
-      {error2 && (
+      {errorMsg && (
         <div className="flex items-center gap-2 rounded-lg bg-destructive/10 p-3 text-sm text-destructive">
           <AlertCircle className="h-4 w-4 flex-shrink-0" />
-          {error2}
+          {errorMsg}
         </div>
       )}
 

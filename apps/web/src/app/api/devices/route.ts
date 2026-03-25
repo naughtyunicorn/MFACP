@@ -8,7 +8,7 @@ export async function GET() {
     
     if (!result) {
       return NextResponse.json(
-        { success: false, error: { code: 'UNAUTHORIZED', message: 'Not authenticated.' } },
+        { error: 'Not authenticated.' },
         { status: 401 }
       );
     }
@@ -22,8 +22,7 @@ export async function GET() {
     ` as DBDevice[];
     
     return NextResponse.json({
-      success: true,
-      data: devices.map(device => ({
+      devices: devices.map(device => ({
         id: device.id,
         deviceId: device.device_id,
         deviceType: device.device_type,
@@ -40,7 +39,7 @@ export async function GET() {
   } catch (error) {
     console.error('Get devices error:', error);
     return NextResponse.json(
-      { success: false, error: { code: 'SERVER_ERROR', message: 'An unexpected error occurred.' } },
+      { error: 'An unexpected error occurred.' },
       { status: 500 }
     );
   }
@@ -52,7 +51,7 @@ export async function DELETE(request: NextRequest) {
     
     if (!result) {
       return NextResponse.json(
-        { success: false, error: { code: 'UNAUTHORIZED', message: 'Not authenticated.' } },
+        { error: 'Not authenticated.' },
         { status: 401 }
       );
     }
@@ -63,31 +62,33 @@ export async function DELETE(request: NextRequest) {
     
     if (!deviceId) {
       return NextResponse.json(
-        { success: false, error: { code: 'INVALID_REQUEST', message: 'Device ID is required.' } },
+        { error: 'Device ID is required.' },
         { status: 400 }
       );
     }
     
     // Check if device belongs to user
-    const [device] = await sql`
+    const devices = await sql`
       SELECT * FROM devices WHERE id = ${deviceId} AND user_id = ${user.id}
-    ` as DBDevice[];
+    `;
+    
+    const device = devices[0] as DBDevice | undefined;
     
     if (!device) {
       return NextResponse.json(
-        { success: false, error: { code: 'NOT_FOUND', message: 'Device not found.' } },
+        { error: 'Device not found.' },
         { status: 404 }
       );
     }
     
     // Revoke device
     await sql`
-      UPDATE devices SET is_active = false WHERE id = ${deviceId}
+      UPDATE devices SET is_active = false, updated_at = NOW() WHERE id = ${deviceId}
     `;
     
     // Invalidate all sessions for this device
     await sql`
-      UPDATE sessions SET is_active = false WHERE device_id = ${deviceId}
+      UPDATE sessions SET is_active = false, updated_at = NOW() WHERE device_id = ${deviceId}
     `;
     
     // Log security event
@@ -104,13 +105,12 @@ export async function DELETE(request: NextRequest) {
     );
     
     return NextResponse.json({
-      success: true,
-      data: { message: 'Device revoked successfully.' },
+      message: 'Device revoked successfully.',
     });
   } catch (error) {
     console.error('Revoke device error:', error);
     return NextResponse.json(
-      { success: false, error: { code: 'SERVER_ERROR', message: 'An unexpected error occurred.' } },
+      { error: 'An unexpected error occurred.' },
       { status: 500 }
     );
   }

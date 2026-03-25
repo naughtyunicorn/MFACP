@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { sql, DBUser } from '@/lib/db';
-import { hashPassword, createSession, setAuthCookie, logSecurityEvent } from '@/lib/auth';
+import { sql } from '@/lib/db';
+import { hashPassword, createSession, setAuthCookie, logSecurityEvent, DBUser } from '@/lib/auth';
 import { checkRateLimit } from '@/lib/redis';
 
 const registerSchema = z.object({
@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
     const rateLimit = await checkRateLimit(`register:${ipAddress}`, 5, 3600);
     if (!rateLimit.allowed) {
       return NextResponse.json(
-        { success: false, error: { code: 'RATE_LIMITED', message: 'Too many registration attempts. Please try again later.' } },
+        { error: 'Too many registration attempts. Please try again later.' },
         { status: 429 }
       );
     }
@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
     
     if (existingUser.length > 0) {
       return NextResponse.json(
-        { success: false, error: { code: 'USER_EXISTS', message: 'An account with this email already exists.' } },
+        { error: 'An account with this email already exists.' },
         { status: 400 }
       );
     }
@@ -43,11 +43,13 @@ export async function POST(request: NextRequest) {
     const passwordHash = await hashPassword(password);
     
     // Create user
-    const [user] = await sql`
-      INSERT INTO users (email, password_hash, last_password_change)
-      VALUES (${email.toLowerCase()}, ${passwordHash}, NOW())
+    const users = await sql`
+      INSERT INTO users (email, password_hash, last_password_change, email_verified, is_locked, risk_tier)
+      VALUES (${email.toLowerCase()}, ${passwordHash}, NOW(), false, false, 'standard')
       RETURNING *
-    ` as DBUser[];
+    `;
+    
+    const user = users[0] as DBUser;
     
     // Create session
     const { token, session } = await createSession(
@@ -62,7 +64,7 @@ export async function POST(request: NextRequest) {
     
     // Log security event
     await logSecurityEvent(
-      'LOGIN_SUCCESS',
+      'REGISTRATION',
       'User Registration',
       `New user registered: ${email}`,
       {
@@ -75,35 +77,27 @@ export async function POST(request: NextRequest) {
     );
     
     return NextResponse.json({
-      success: true,
-      data: {
-        user: {
-          id: user.id,
-          email: user.email,
-          emailVerified: user.email_verified,
-          riskTier: user.risk_tier,
-          createdAt: user.created_at,
-        },
-        session: {
-          id: session.id,
-          token,
-          sessionType: session.session_type,
-          trustLevel: session.trust_level,
-          expiresAt: session.expires_at,
-        },
+      user: {
+        id: user.id,
+        email: user.email,
+        createdAt: user.created_at,
+      },
+      session: {
+        id: session.id,
+        expiresAt: session.expires_at,
       },
     });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json(
-        { success: false, error: { code: 'VALIDATION_ERROR', message: error.errors[0].message } },
+        { error: error.errors[0].message },
         { status: 400 }
       );
     }
     
     console.error('Registration error:', error);
     return NextResponse.json(
-      { success: false, error: { code: 'SERVER_ERROR', message: 'An unexpected error occurred.' } },
+      { error: 'An unexpected error occurred.' },
       { status: 500 }
     );
   }

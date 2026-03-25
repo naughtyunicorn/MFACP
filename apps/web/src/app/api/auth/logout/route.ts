@@ -1,7 +1,7 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { getCurrentUser, invalidateSession, clearAuthCookie, logSecurityEvent } from '@/lib/auth';
+import { NextResponse } from 'next/server';
+import { getCurrentUser, deleteSession, clearAuthCookie, logSecurityEvent } from '@/lib/auth';
 
-export async function POST(request: NextRequest) {
+export async function POST() {
   try {
     const result = await getCurrentUser();
     
@@ -9,7 +9,7 @@ export async function POST(request: NextRequest) {
       const { user, session } = result;
       
       // Invalidate session
-      await invalidateSession(session.id, session.token);
+      await deleteSession(session.token);
       
       // Log security event
       await logSecurityEvent(
@@ -28,18 +28,18 @@ export async function POST(request: NextRequest) {
     await clearAuthCookie();
     
     return NextResponse.json({
-      success: true,
-      data: { message: 'Logged out successfully.' },
+      message: 'Logged out successfully.',
     });
   } catch (error) {
     console.error('Logout error:', error);
     
     // Still clear the cookie even if there's an error
-    await clearAuthCookie();
+    try {
+      await clearAuthCookie();
+    } catch {}
     
     return NextResponse.json({
-      success: true,
-      data: { message: 'Logged out successfully.' },
+      message: 'Logged out successfully.',
     });
   }
 }

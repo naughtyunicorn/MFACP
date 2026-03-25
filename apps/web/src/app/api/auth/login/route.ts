@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { sql, DBUser } from '@/lib/db';
-import { verifyPassword, createSession, setAuthCookie, logSecurityEvent } from '@/lib/auth';
+import { sql } from '@/lib/db';
+import { verifyPassword, createSession, setAuthCookie, logSecurityEvent, DBUser } from '@/lib/auth';
 import { checkRateLimit } from '@/lib/redis';
 
 const loginSchema = z.object({
@@ -29,15 +29,17 @@ export async function POST(request: NextRequest) {
       );
       
       return NextResponse.json(
-        { success: false, error: { code: 'RATE_LIMITED', message: 'Too many login attempts. Please try again later.' } },
+        { error: 'Too many login attempts. Please try again later.' },
         { status: 429 }
       );
     }
     
     // Find user
-    const [user] = await sql`
+    const users = await sql`
       SELECT * FROM users WHERE email = ${email.toLowerCase()}
-    ` as DBUser[];
+    `;
+    
+    const user = users[0] as DBUser | undefined;
     
     if (!user) {
       await logSecurityEvent(
@@ -48,7 +50,7 @@ export async function POST(request: NextRequest) {
       );
       
       return NextResponse.json(
-        { success: false, error: { code: 'INVALID_CREDENTIALS', message: 'Invalid email or password.' } },
+        { error: 'Invalid email or password.' },
         { status: 401 }
       );
     }
@@ -63,7 +65,7 @@ export async function POST(request: NextRequest) {
       );
       
       return NextResponse.json(
-        { success: false, error: { code: 'ACCOUNT_LOCKED', message: 'This account has been locked. Please contact support.' } },
+        { error: 'This account has been locked. Please contact support.' },
         { status: 403 }
       );
     }
@@ -71,7 +73,7 @@ export async function POST(request: NextRequest) {
     // Check password
     if (!user.password_hash) {
       return NextResponse.json(
-        { success: false, error: { code: 'NO_PASSWORD', message: 'This account uses passwordless authentication. Please use a passkey.' } },
+        { error: 'This account uses passwordless authentication. Please use a passkey.' },
         { status: 400 }
       );
     }
@@ -87,7 +89,7 @@ export async function POST(request: NextRequest) {
       );
       
       return NextResponse.json(
-        { success: false, error: { code: 'INVALID_CREDENTIALS', message: 'Invalid email or password.' } },
+        { error: 'Invalid email or password.' },
         { status: 401 }
       );
     }
@@ -118,38 +120,30 @@ export async function POST(request: NextRequest) {
     );
     
     return NextResponse.json({
-      success: true,
-      data: {
-        user: {
-          id: user.id,
-          email: user.email,
-          emailVerified: user.email_verified,
-          riskTier: user.risk_tier,
-          isLocked: user.is_locked,
-          createdAt: user.created_at,
-          updatedAt: user.updated_at,
-        },
-        session: {
-          id: session.id,
-          token,
-          sessionType: session.session_type,
-          trustLevel: session.trust_level,
-          expiresAt: session.expires_at,
-          requiresReauth: session.requires_reauth,
-        },
+      user: {
+        id: user.id,
+        email: user.email,
+        displayName: user.display_name,
+        emailVerified: user.email_verified,
+        isLocked: user.is_locked,
+        createdAt: user.created_at,
+      },
+      session: {
+        id: session.id,
+        expiresAt: session.expires_at,
       },
     });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json(
-        { success: false, error: { code: 'VALIDATION_ERROR', message: error.errors[0].message } },
+        { error: error.errors[0].message },
         { status: 400 }
       );
     }
     
     console.error('Login error:', error);
     return NextResponse.json(
-      { success: false, error: { code: 'SERVER_ERROR', message: 'An unexpected error occurred.' } },
+      { error: 'An unexpected error occurred.' },
       { status: 500 }
     );
   }

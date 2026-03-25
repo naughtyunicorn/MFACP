@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { validateSession, generateRecoveryCodes } from '@/lib/auth';
-import { sql, logSecurityEvent } from '@/lib/db';
+import { validateSession, generateRecoveryCodes, logSecurityEvent } from '@/lib/auth';
+import { sql } from '@/lib/db';
 
 export async function GET(request: NextRequest) {
   try {
@@ -34,7 +34,7 @@ export async function GET(request: NextRequest) {
         id: code.id,
         // Mask the code, only show first and last 2 characters
         code: code.code.substring(0, 2) + '****' + code.code.substring(code.code.length - 2),
-        used_at: code.used_at,
+        used: !!code.used_at,
         created_at: code.created_at,
       })),
     });
@@ -82,13 +82,15 @@ export async function POST(request: NextRequest) {
       `;
     }
     
+    const ipAddress = request.headers.get('x-forwarded-for') || 'unknown';
+    const userAgent = request.headers.get('user-agent') || 'unknown';
+    
     // Log security event
     await logSecurityEvent(
-      session.user_id,
-      'recovery_codes_generated',
-      request.headers.get('x-forwarded-for') || 'unknown',
-      request.headers.get('user-agent') || 'unknown',
-      { count: codes.length }
+      'RECOVERY_CODES_GENERATED',
+      'Recovery Codes Generated',
+      `Generated ${codes.length} new recovery codes`,
+      { userId: session.user_id, sessionId: session.id, ipAddress, userAgent, status: 'SUCCESS' }
     );
     
     return NextResponse.json({
